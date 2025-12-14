@@ -59,6 +59,66 @@ This project is built with:
 - React
 - shadcn-ui
 - Tailwind CSS
+- Supabase (Database, Storage, Edge Functions)
+- OpenAI / ElevenLabs (AI Services)
+- Shotstack (Video Rendering)
+
+## Database Setup
+
+This project uses Supabase for the database. Follow these steps to set up the database:
+
+### 1. Install Supabase CLI
+
+```bash
+npm install -g supabase
+```
+
+### 2. Login to Supabase
+
+```bash
+supabase login
+```
+
+### 3. Link Your Project
+
+```bash
+supabase link --project-ref your-project-ref
+```
+
+### 4. Run Migrations
+
+```bash
+# Apply all migrations
+supabase db reset
+
+# Or push to remote
+supabase db push
+```
+
+### 5. Generate TypeScript Types
+
+After running migrations, generate TypeScript types:
+
+```bash
+supabase gen types typescript --local > src/integrations/supabase/types.ts
+```
+
+Or for remote:
+
+```bash
+supabase gen types typescript --project-id your-project-id > src/integrations/supabase/types.ts
+```
+
+### Database Schema
+
+The database includes:
+
+- **stories** - User stories and configuration
+- **scenes** - AI-generated scenes for each story
+- **videos** - Final composed videos
+- **Storage buckets** - For images, audio, and videos
+
+See `supabase/migrations/README.md` for detailed schema documentation.
 
 ## How can I deploy this project?
 

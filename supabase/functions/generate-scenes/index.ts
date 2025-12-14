@@ -12,10 +12,10 @@ serve(async (req) => {
 
   try {
     const { story, style } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY is not configured');
+    if (!GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY is not configured');
     }
 
     if (!story || story.trim().length < 50) {
@@ -35,7 +35,7 @@ serve(async (req) => {
 
     console.log(`Generating scenes for story with ${wordCount} words, style: ${style}`);
 
-    const systemPrompt = `You are a professional cinematic scene breakdown AI for video generation. Your task is to analyze stories and break them into distinct visual scenes optimized for AI video creation.
+    const prompt = `You are a professional cinematic scene breakdown AI for video generation. Your task is to analyze stories and break them into distinct visual scenes optimized for AI video creation.
 
 For each scene, you must provide:
 1. sceneNumber: Sequential number starting from 1
@@ -62,27 +62,40 @@ Respond ONLY with valid JSON in this exact format:
       "narrationText": "The narration text for this scene..."
     }
   ]
-}`;
+}
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+Analyze this story and break it into cinematic scenes:
+
+${story}`;
+
+    // Use Gemini API directly
+    const model = 'gemini-1.5-flash'; // or 'gemini-1.5-pro' for better quality
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Analyze this story and break it into cinematic scenes:\n\n${story}` }
-        ],
-        temperature: 0.7,
+        contents: [{
+          parts: [{
+            text: prompt
+          }]
+        }],
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+          responseMimeType: 'application/json',
+        },
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI gateway error:', response.status, errorText);
+      console.error('Gemini API error:', response.status, errorText);
       
       if (response.status === 429) {
         return new Response(
@@ -90,33 +103,49 @@ Respond ONLY with valid JSON in this exact format:
           { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: 'AI credits exhausted. Please add credits to continue.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+      if (response.status === 400) {
+        try {
+          const errorData = JSON.parse(errorText);
+          return new Response(
+            JSON.stringify({ error: errorData.error?.message || 'Invalid request to Gemini API' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        } catch {
+          return new Response(
+            JSON.stringify({ error: 'Invalid request to Gemini API' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
       }
       
-      throw new Error(`AI gateway error: ${response.status}`);
+      throw new Error(`Gemini API error: ${response.status}`);
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
+    
+    // Extract text content from Gemini response
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!content) {
+      console.error('No content in Gemini response:', JSON.stringify(data));
       throw new Error('No content in AI response');
     }
 
-    console.log('AI response received, parsing scenes...');
+    console.log('Gemini response received, parsing scenes...');
 
-    // Extract JSON from the response (handle markdown code blocks)
-    let jsonStr = content;
-    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[1].trim();
+    // Parse JSON response (Gemini should return JSON directly with responseMimeType)
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (parseError) {
+      // Fallback: try to extract JSON from markdown code blocks
+      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[1].trim());
+      } else {
+        throw new Error('Failed to parse JSON from response');
+      }
     }
-
-    const parsed = JSON.parse(jsonStr);
     
     if (!parsed.scenes || !Array.isArray(parsed.scenes)) {
       throw new Error('Invalid response format: missing scenes array');

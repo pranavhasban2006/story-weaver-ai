@@ -11,6 +11,7 @@ interface Scene {
   imageUrl: string;
   narrationText: string;
   duration: number;
+  audioUrl?: string;
 }
 
 interface ComposeRequest {
@@ -73,6 +74,43 @@ serve(async (req) => {
       return clip;
     });
 
+    // Helper function to check if audio URL is valid (not a placeholder)
+    const isValidAudioUrl = (url?: string): boolean => {
+      if (!url) return false;
+      // Check if it's the placeholder base64 audio
+      if (url.startsWith('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=')) {
+        return false;
+      }
+      // Shotstack requires HTTP/HTTPS URLs, not data URIs
+      // For base64 audio, we'd need to upload to storage first (future enhancement)
+      return url.startsWith('http://') || url.startsWith('https://');
+    };
+
+    // Add audio tracks for narration
+    // Note: Shotstack requires HTTP/HTTPS URLs for audio assets
+    // Base64 data URIs would need to be uploaded to storage first
+    let audioStartTime = 0;
+    const audioClips = scenes
+      .filter(scene => isValidAudioUrl(scene.audioUrl))
+      .map((scene) => {
+        const duration = scene.duration || 4;
+        const audioClip = {
+          asset: {
+            type: 'audio',
+            src: scene.audioUrl!,
+          },
+          start: audioStartTime,
+          length: duration,
+          volume: 1.0,
+          fade: {
+            in: 0.5,
+            out: 0.5,
+          },
+        };
+        audioStartTime += duration - 0.5;
+        return audioClip;
+      });
+
     // Add title overlays for each scene
     let titleStart = 0;
     const titleClips = scenes.map((scene, index) => {
@@ -107,18 +145,31 @@ serve(async (req) => {
       return acc + (s.duration || 4) - 0.5;
     }, 0);
 
+    // Build the timeline with multiple tracks
+    const tracks: any[] = [];
+    
+    // Add title track
+    if (titleClips.length > 0) {
+      tracks.push({ clips: titleClips });
+    }
+    
+    // Add image track
+    tracks.push({ clips });
+    
+    // Add narration audio track
+    if (audioClips.length > 0) {
+      tracks.push({ clips: audioClips });
+    }
+
     // Build the timeline
     const timeline = {
       soundtrack: includeMusic ? {
         src: 'https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/unminus/ambisax.mp3',
         effect: 'fadeOut',
-        volume: 0.3,
+        volume: audioClips.length > 0 ? 0.15 : 0.3, // Lower volume when narration is present
       } : undefined,
       background: '#000000',
-      tracks: [
-        { clips: titleClips },
-        { clips },
-      ],
+      tracks,
     };
 
     // Build the output configuration
@@ -151,7 +202,21 @@ serve(async (req) => {
     if (!renderResponse.ok) {
       const errorText = await renderResponse.text();
       console.error('Shotstack render error:', renderResponse.status, errorText);
-      throw new Error(`Video render failed: ${renderResponse.status}`);
+      
+      // Try to parse error message for better user feedback
+      let errorMessage = `Video render failed: ${renderResponse.status}`;
+      try {
+        const errorData = JSON.parse(errorText);
+        if (errorData.message) {
+          errorMessage = errorData.message;
+        } else if (errorData.response?.message) {
+          errorMessage = errorData.response.message;
+        }
+      } catch {
+        // Use default error message if parsing fails
+      }
+      
+      throw new Error(errorMessage);
     }
 
     const renderData = await renderResponse.json();
@@ -163,10 +228,10 @@ serve(async (req) => {
 
     console.log(`Render job submitted: ${renderId}`);
 
-    // Poll for render completion (max 2 minutes)
+    // Poll for render completion (max 3 minutes for longer videos)
     let videoUrl = null;
     let attempts = 0;
-    const maxAttempts = 24; // 24 * 5 seconds = 2 minutes
+    const maxAttempts = 36; // 36 * 5 seconds = 3 minutes
 
     while (!videoUrl && attempts < maxAttempts) {
       await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
@@ -178,25 +243,34 @@ serve(async (req) => {
       });
 
       if (!statusResponse.ok) {
+        const errorText = await statusResponse.text();
+        console.error('Failed to check render status:', statusResponse.status, errorText);
         throw new Error('Failed to check render status');
       }
 
       const statusData = await statusResponse.json();
       const status = statusData.response?.status;
 
-      console.log(`Render status: ${status} (attempt ${attempts + 1})`);
+      console.log(`Render status: ${status} (attempt ${attempts + 1}/${maxAttempts})`);
 
       if (status === 'done') {
         videoUrl = statusData.response?.url;
+        break;
       } else if (status === 'failed') {
-        throw new Error('Video render failed on Shotstack');
+        const errorMessage = statusData.response?.error || 'Video render failed on Shotstack';
+        console.error('Render failed:', errorMessage);
+        throw new Error(errorMessage);
+      } else if (status === 'queued' || status === 'rendering') {
+        // Continue polling
+      } else {
+        console.warn(`Unknown render status: ${status}`);
       }
 
       attempts++;
     }
 
     if (!videoUrl) {
-      throw new Error('Video render timed out. Please try again.');
+      throw new Error(`Video render timed out after ${maxAttempts * 5} seconds. The video may still be processing.`);
     }
 
     console.log(`Video ready: ${videoUrl}`);
