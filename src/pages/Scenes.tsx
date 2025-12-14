@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ScenePreviewHeader } from "@/components/scenes/ScenePreviewHeader";
 import { SceneCard } from "@/components/scenes/SceneCard";
 import { LoadingOverlay } from "@/components/scenes/LoadingOverlay";
+import { GenerationProgress } from "@/components/scenes/GenerationProgress";
 import { Scene, AspectRatio, VoiceType, VideoStyle } from "@/lib/types";
 import { generateImage, generateSpeech, composeVideo } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
@@ -15,9 +16,17 @@ const Scenes = () => {
   const [composingMessage, setComposingMessage] = useState("Preparing video composition...");
   const [generatingImages, setGeneratingImages] = useState<Set<number>>(new Set());
   const [generatingAudio, setGeneratingAudio] = useState<Set<number>>(new Set());
+  
+  // Progress tracking
+  const [currentGeneratingScene, setCurrentGeneratingScene] = useState(0);
+  const [currentTask, setCurrentTask] = useState<'image' | 'audio' | 'idle'>('idle');
+  const [isGenerationComplete, setIsGenerationComplete] = useState(false);
 
   const generateImageForScene = useCallback(async (scene: Scene, aspectRatio: AspectRatio) => {
     setGeneratingImages(prev => new Set(prev).add(scene.sceneNumber));
+    setCurrentGeneratingScene(scene.sceneNumber);
+    setCurrentTask('image');
+    
     setScenes(prev => prev.map(s => 
       s.sceneNumber === scene.sceneNumber ? { ...s, status: 'generating' as const } : s
     ));
@@ -56,6 +65,7 @@ const Scenes = () => {
 
   const generateAudioForScene = useCallback(async (scene: Scene, voiceType: VoiceType) => {
     setGeneratingAudio(prev => new Set(prev).add(scene.sceneNumber));
+    setCurrentTask('audio');
 
     try {
       const response = await generateSpeech(scene.narrationText, voiceType, scene.sceneNumber);
@@ -76,6 +86,32 @@ const Scenes = () => {
     }
   }, []);
 
+  const generateAllAssets = useCallback(async (scenesToProcess: Scene[], parsedConfig: { aspectRatio: AspectRatio; voiceType: VoiceType }) => {
+    for (let i = 0; i < scenesToProcess.length; i++) {
+      const scene = scenesToProcess[i];
+      setCurrentGeneratingScene(scene.sceneNumber);
+      
+      // Generate image first
+      await generateImageForScene(scene, parsedConfig.aspectRatio);
+      
+      // Then generate audio
+      await generateAudioForScene(scene, parsedConfig.voiceType);
+      
+      // Small delay between scenes to avoid rate limits
+      if (i < scenesToProcess.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    setCurrentTask('idle');
+    setIsGenerationComplete(true);
+    
+    toast({
+      title: "All Assets Generated",
+      description: "Your scenes are ready for video composition!",
+    });
+  }, [generateImageForScene, generateAudioForScene]);
+
   useEffect(() => {
     const storedScenes = sessionStorage.getItem('visionforge_scenes');
     const storedConfig = sessionStorage.getItem('visionforge_config');
@@ -91,21 +127,18 @@ const Scenes = () => {
     setScenes(parsedScenes);
     setConfig(parsedConfig);
     
-    // Generate images and audio for each scene with staggered delays
-    parsedScenes.forEach((scene, index) => {
-      setTimeout(() => {
-        generateImageForScene(scene, parsedConfig.aspectRatio);
-        generateAudioForScene(scene, parsedConfig.voiceType);
-      }, index * 2000); // 2 second delay between each scene to avoid rate limits
-    });
-  }, [navigate, generateImageForScene, generateAudioForScene]);
+    // Start sequential generation
+    generateAllAssets(parsedScenes, parsedConfig);
+  }, [navigate, generateAllAssets]);
 
   const readyCount = scenes.filter(s => s.status === 'ready').length;
 
   const handleRegenerateImage = async (sceneNumber: number) => {
     const scene = scenes.find(s => s.sceneNumber === sceneNumber);
     if (scene && config) {
+      setIsGenerationComplete(false);
       await generateImageForScene(scene, config.aspectRatio);
+      setIsGenerationComplete(true);
     }
   };
 
@@ -186,22 +219,34 @@ const Scenes = () => {
         isComposing={isComposing}
       />
 
-      <div className="container max-w-4xl mx-auto px-4 py-8 space-y-6">
-        {scenes.map((scene, index) => (
-          <div
-            key={scene.sceneNumber}
-            style={{ animationDelay: `${index * 0.1}s` }}
-          >
-            <SceneCard
-              scene={scene}
-              onRegenerateImage={() => handleRegenerateImage(scene.sceneNumber)}
-              onPreviewAudio={() => handlePreviewAudio(scene.sceneNumber)}
-              onEditTitle={() => {}}
-              isGeneratingImage={generatingImages.has(scene.sceneNumber)}
-              isGeneratingAudio={generatingAudio.has(scene.sceneNumber)}
-            />
-          </div>
-        ))}
+      <div className="container max-w-4xl mx-auto px-4 py-8">
+        {/* Generation Progress */}
+        <GenerationProgress
+          totalScenes={scenes.length}
+          currentScene={currentGeneratingScene}
+          completedScenes={readyCount}
+          currentTask={currentTask}
+          isComplete={isGenerationComplete}
+        />
+
+        {/* Scene Cards */}
+        <div className="space-y-6">
+          {scenes.map((scene, index) => (
+            <div
+              key={scene.sceneNumber}
+              style={{ animationDelay: `${index * 0.1}s` }}
+            >
+              <SceneCard
+                scene={scene}
+                onRegenerateImage={() => handleRegenerateImage(scene.sceneNumber)}
+                onPreviewAudio={() => handlePreviewAudio(scene.sceneNumber)}
+                onEditTitle={() => {}}
+                isGeneratingImage={generatingImages.has(scene.sceneNumber)}
+                isGeneratingAudio={generatingAudio.has(scene.sceneNumber)}
+              />
+            </div>
+          ))}
+        </div>
       </div>
 
       {isComposing && (
