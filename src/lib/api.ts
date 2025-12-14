@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import { Scene, VideoStyle, VoiceType, AspectRatio } from "./types";
+import { Scene, VideoStyle, VoiceType, AspectRatio, VideoMetadata } from "./types";
 
 export interface GenerateScenesResponse {
   scenes: Scene[];
@@ -16,6 +16,13 @@ export interface TextToSpeechResponse {
   audioUrl: string;
   sceneNumber: number;
   duration: number;
+  error?: string;
+}
+
+export interface ComposeVideoResponse {
+  success: boolean;
+  videoUrl: string;
+  metadata: VideoMetadata;
   error?: string;
 }
 
@@ -72,6 +79,28 @@ export async function generateSpeech(
   if (error) {
     console.error('Error generating speech:', error);
     throw new Error(error.message || 'Failed to generate speech');
+  }
+
+  if (data.error) {
+    throw new Error(data.error);
+  }
+
+  return data;
+}
+
+export async function composeVideo(
+  scenes: Scene[],
+  aspectRatio: AspectRatio,
+  style: VideoStyle,
+  includeMusic: boolean = false
+): Promise<ComposeVideoResponse> {
+  const { data, error } = await supabase.functions.invoke('compose-video', {
+    body: { scenes, aspectRatio, style, includeMusic }
+  });
+
+  if (error) {
+    console.error('Error composing video:', error);
+    throw new Error(error.message || 'Failed to compose video');
   }
 
   if (data.error) {

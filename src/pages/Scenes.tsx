@@ -3,16 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { ScenePreviewHeader } from "@/components/scenes/ScenePreviewHeader";
 import { SceneCard } from "@/components/scenes/SceneCard";
 import { LoadingOverlay } from "@/components/scenes/LoadingOverlay";
-import { Scene, AspectRatio, VoiceType } from "@/lib/types";
-import { generateImage, generateSpeech } from "@/lib/api";
+import { Scene, AspectRatio, VoiceType, VideoStyle } from "@/lib/types";
+import { generateImage, generateSpeech, composeVideo } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 
 const Scenes = () => {
   const navigate = useNavigate();
   const [scenes, setScenes] = useState<Scene[]>([]);
-  const [config, setConfig] = useState<{ aspectRatio: AspectRatio; voiceType: VoiceType } | null>(null);
+  const [config, setConfig] = useState<{ aspectRatio: AspectRatio; voiceType: VoiceType; style: VideoStyle } | null>(null);
   const [isComposing, setIsComposing] = useState(false);
-  const [composingProgress, setComposingProgress] = useState(0);
+  const [composingMessage, setComposingMessage] = useState("Preparing video composition...");
   const [generatingImages, setGeneratingImages] = useState<Set<number>>(new Set());
   const [generatingAudio, setGeneratingAudio] = useState<Set<number>>(new Set());
 
@@ -86,7 +86,7 @@ const Scenes = () => {
     }
     
     const parsedScenes: Scene[] = JSON.parse(storedScenes);
-    const parsedConfig = storedConfig ? JSON.parse(storedConfig) : { aspectRatio: '16:9', voiceType: 'female' };
+    const parsedConfig = storedConfig ? JSON.parse(storedConfig) : { aspectRatio: '16:9', voiceType: 'female', style: 'cinematic' };
     
     setScenes(parsedScenes);
     setConfig(parsedConfig);
@@ -123,42 +123,54 @@ const Scenes = () => {
   };
 
   const handleCompose = async () => {
+    if (!config) return;
+    
     setIsComposing(true);
-    setComposingProgress(0);
-    
-    // Simulate video composition progress
-    const interval = setInterval(() => {
-      setComposingProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          return 100;
-        }
-        return prev + Math.random() * 15;
-      });
-    }, 500);
+    setComposingMessage("Submitting video to render pipeline...");
 
-    // Simulate composition time
-    await new Promise(resolve => setTimeout(resolve, 4000));
-    
-    clearInterval(interval);
-    setComposingProgress(100);
-    
-    // Store video metadata
-    sessionStorage.setItem('visionforge_video', JSON.stringify({
-      url: 'demo-video-url',
-      metadata: {
-        duration: scenes.reduce((acc, s) => acc + (s.duration || 4), 0),
-        sceneCount: scenes.length,
-        resolution: '1080p',
-        fileSize: 15 * 1024 * 1024, // 15MB
-        format: 'mp4',
+    try {
+      // Filter scenes with valid images
+      const validScenes = scenes.filter(s => s.imageUrl && s.status === 'ready');
+      
+      if (validScenes.length === 0) {
+        throw new Error('No scenes with images ready for composition');
       }
-    }));
-    
-    setTimeout(() => {
+
+      setComposingMessage("Rendering video with Shotstack (this may take 1-2 minutes)...");
+
+      const response = await composeVideo(
+        validScenes,
+        config.aspectRatio,
+        config.style,
+        true // Include background music
+      );
+
+      if (response.success && response.videoUrl) {
+        // Store video metadata
+        sessionStorage.setItem('visionforge_video', JSON.stringify({
+          url: response.videoUrl,
+          metadata: response.metadata,
+        }));
+
+        toast({
+          title: "Video Ready!",
+          description: "Your video has been rendered successfully.",
+        });
+
+        navigate('/export');
+      } else {
+        throw new Error('Video composition failed');
+      }
+    } catch (error) {
+      console.error('Video composition error:', error);
+      toast({
+        title: "Composition Failed",
+        description: error instanceof Error ? error.message : "Failed to compose video. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
       setIsComposing(false);
-      navigate('/export');
-    }, 500);
+    }
   };
 
   if (scenes.length === 0) {
@@ -194,8 +206,7 @@ const Scenes = () => {
 
       {isComposing && (
         <LoadingOverlay
-          progress={Math.min(Math.round(composingProgress), 100)}
-          message="Combining scenes with transitions and audio..."
+          message={composingMessage}
         />
       )}
     </div>
