@@ -19,12 +19,11 @@ serve(async (req) => {
 
   try {
     const { prompt, aspectRatio = '16:9', sceneNumber } = await req.json();
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    
+    // Support local Stable Diffusion and OpenAI DALL-E
+    const LOCAL_SD_URL = Deno.env.get('LOCAL_SD_URL') || 'http://localhost:7860';
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-
-    if (!GEMINI_API_KEY && !OPENAI_API_KEY) {
-      throw new Error('GEMINI_API_KEY or OPENAI_API_KEY must be configured');
-    }
+    const USE_LOCAL_SD = Deno.env.get('USE_LOCAL_SD') === 'true' || !OPENAI_API_KEY;
 
     if (!prompt) {
       return new Response(
@@ -41,8 +40,48 @@ serve(async (req) => {
 
     let imageUrl: string | null = null;
 
-    // Try OpenAI DALL-E first if API key is available (better image quality)
-    if (OPENAI_API_KEY) {
+    // Try local Stable Diffusion first if configured
+    if (USE_LOCAL_SD) {
+      try {
+        console.log(`Attempting image generation with local Stable Diffusion at ${LOCAL_SD_URL}...`);
+        
+        // Try Automatic1111 API format
+        const sdResponse = await fetch(`${LOCAL_SD_URL}/sdapi/v1/txt2img`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prompt: enhancedPrompt,
+            negative_prompt: 'blurry, low quality, distorted, watermark, text',
+            width: dimensions.width,
+            height: dimensions.height,
+            steps: 20,
+            cfg_scale: 7,
+            sampler_index: 'DPM++ 2M Karras',
+          }),
+        });
+
+        if (sdResponse.ok) {
+          const sdData = await sdResponse.json();
+          if (sdData.images && sdData.images.length > 0) {
+            // Stable Diffusion returns base64 encoded image
+            imageUrl = `data:image/png;base64,${sdData.images[0]}`;
+            console.log(`Successfully generated image with local Stable Diffusion for scene ${sceneNumber}`);
+          }
+        } else {
+          console.warn('Local Stable Diffusion failed, trying OpenAI...');
+        }
+      } catch (error) {
+        console.warn('Local Stable Diffusion error:', error);
+        if (!OPENAI_API_KEY) {
+          throw new Error(`Local Stable Diffusion failed and no OpenAI API key configured: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+
+    // Try OpenAI DALL-E if local SD not configured or failed
+    if (!imageUrl && OPENAI_API_KEY) {
       try {
         console.log('Attempting image generation with OpenAI DALL-E...');
         const openaiResponse = await fetch('https://api.openai.com/v1/images/generations', {
@@ -74,26 +113,9 @@ serve(async (req) => {
       }
     }
 
-    // Fallback to Gemini for image generation using Imagen API
-    // Note: Gemini doesn't have direct image generation, but we can use it to enhance prompts
-    // For actual image generation, we'll use a different approach
-    // Gemini can be used with Google's Imagen API if available, or we can use other services
-    
-    // Alternative: Use Gemini to generate a better prompt, then use another service
-    // For now, if OpenAI fails and only Gemini is available, we'll return an error
-    // suggesting to use OpenAI or another image generation service
-    
-    if (!imageUrl && GEMINI_API_KEY && !OPENAI_API_KEY) {
-      // Gemini doesn't directly generate images, but we can use it to create better prompts
-      // For production, you might want to integrate with Google's Imagen API
-      // or use another image generation service
-      console.warn('Gemini API does not support direct image generation. Please configure OPENAI_API_KEY for image generation.');
-      throw new Error('Image generation requires OPENAI_API_KEY. Gemini API does not support direct image generation. Please configure OpenAI API key or use another image generation service.');
-    }
-
     if (!imageUrl) {
       console.error('All image generation methods failed');
-      throw new Error('Failed to generate image. Please ensure OPENAI_API_KEY is configured for image generation.');
+      throw new Error('Failed to generate image. Please configure USE_LOCAL_SD=true with LOCAL_SD_URL, or configure OPENAI_API_KEY for image generation.');
     }
 
     console.log(`Successfully generated image for scene ${sceneNumber}`);

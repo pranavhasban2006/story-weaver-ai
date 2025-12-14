@@ -103,13 +103,6 @@ const Index = () => {
             disabled={!isValidStory}
           />
         </Card>
-
-        {/* Footer info */}
-        <div className="mt-8 text-center text-sm text-muted-foreground animate-fade-in" style={{ animationDelay: '0.5s' }}>
-          <p>
-            Powered by Lovable AI • Gemini Vision • Neural Voice Synthesis
-          </p>
-        </div>
       </div>
     </div>
   );

@@ -31,7 +31,7 @@ serve(async (req) => {
     const SHOTSTACK_API_KEY = Deno.env.get('SHOTSTACK_API_KEY');
 
     if (!SHOTSTACK_API_KEY) {
-      throw new Error('SHOTSTACK_API_KEY is not configured');
+      throw new Error('SHOTSTACK_API_KEY is not configured. Please set it in Supabase Dashboard → Edge Functions → Secrets. Get your free API key at https://shotstack.io');
     }
 
     if (!scenes || scenes.length === 0) {

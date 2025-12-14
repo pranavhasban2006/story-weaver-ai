@@ -26,14 +26,13 @@ serve(async (req) => {
 
   try {
     const { text, voiceType = 'female', sceneNumber } = await req.json();
+    
+    // Support local TTS (Piper) and cloud TTS services
+    const LOCAL_TTS_URL = Deno.env.get('LOCAL_TTS_URL') || 'http://localhost:5000';
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
     const ELEVENLABS_API_KEY = Deno.env.get('ELEVENLABS_API_KEY');
     const GOOGLE_TTS_API_KEY = Deno.env.get('GOOGLE_TTS_API_KEY');
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-
-    if (!OPENAI_API_KEY && !ELEVENLABS_API_KEY && !GOOGLE_TTS_API_KEY && !LOVABLE_API_KEY) {
-      throw new Error('At least one TTS API key (OPENAI_API_KEY, ELEVENLABS_API_KEY, GOOGLE_TTS_API_KEY, or LOVABLE_API_KEY) must be configured');
-    }
+    const USE_LOCAL_TTS = Deno.env.get('USE_LOCAL_TTS') === 'true' || (!OPENAI_API_KEY && !ELEVENLABS_API_KEY && !GOOGLE_TTS_API_KEY);
 
     if (!text || text.trim().length === 0) {
       return new Response(
@@ -47,8 +46,47 @@ serve(async (req) => {
     let audioUrl: string | null = null;
     let duration = 0;
 
-    // Try OpenAI TTS first (best quality)
-    if (OPENAI_API_KEY) {
+    // Try local TTS (Piper) first if configured
+    if (USE_LOCAL_TTS) {
+      try {
+        console.log(`Attempting TTS with local service at ${LOCAL_TTS_URL}...`);
+        
+        // Piper TTS API format
+        const localTtsResponse = await fetch(`${LOCAL_TTS_URL}/api/tts`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: text,
+            voice: voiceType === 'female' ? 'en_US-lessac-medium' : 'en_US-lessac-medium', // You can configure voices
+          }),
+        });
+
+        if (localTtsResponse.ok) {
+          const audioBlob = await localTtsResponse.blob();
+          const arrayBuffer = await audioBlob.arrayBuffer();
+          const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+          audioUrl = `data:audio/wav;base64,${base64Audio}`;
+          
+          // Estimate duration (rough estimate: ~150 words per minute)
+          const wordCount = text.split(/\s+/).length;
+          duration = Math.max(3, (wordCount / 150) * 60);
+          
+          console.log(`Successfully generated TTS with local service for scene ${sceneNumber}`);
+        } else {
+          console.warn('Local TTS failed, trying cloud services...');
+        }
+      } catch (error) {
+        console.warn('Local TTS error:', error);
+        if (!OPENAI_API_KEY && !ELEVENLABS_API_KEY && !GOOGLE_TTS_API_KEY) {
+          throw new Error(`Local TTS failed and no cloud TTS API keys configured: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+
+    // Try OpenAI TTS if local TTS not configured or failed
+    if (!audioUrl && OPENAI_API_KEY) {
       try {
         console.log('Attempting TTS with OpenAI...');
         const voice = voiceMap[voiceType]?.openai || 'nova';

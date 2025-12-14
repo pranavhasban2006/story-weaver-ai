@@ -12,11 +12,11 @@ serve(async (req) => {
 
   try {
     const { story, style } = await req.json();
+    
+    // Support both local Llama (Ollama) and Gemini API
+    const LOCAL_LLAMA_URL = Deno.env.get('LOCAL_LLAMA_URL') || 'http://localhost:11434';
     const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-
-    if (!GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY is not configured');
-    }
+    let USE_LOCAL_LLAMA = Deno.env.get('USE_LOCAL_LLAMA') === 'true' || !GEMINI_API_KEY;
 
     if (!story || story.trim().length < 50) {
       return new Response(
@@ -68,72 +68,125 @@ Analyze this story and break it into cinematic scenes:
 
 ${story}`;
 
-    // Use Gemini API directly
-    const model = 'gemini-1.5-flash'; // or 'gemini-1.5-pro' for better quality
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+    let content: string;
+    let response: Response;
 
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }],
-        generationConfig: {
-          temperature: 0.7,
-          topK: 40,
-          topP: 0.95,
-          maxOutputTokens: 8192,
-          responseMimeType: 'application/json',
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Gemini API error:', response.status, errorText);
+    // Try local Llama (Ollama) first if configured
+    if (USE_LOCAL_LLAMA) {
+      const llamaModel = Deno.env.get('LLAMA_MODEL') || 'llama3.2';
+      const llamaUrl = `${LOCAL_LLAMA_URL}/api/generate`;
       
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: 'Rate limit exceeded. Please try again in a moment.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+      console.log(`Using local Llama (${llamaModel}) at ${LOCAL_LLAMA_URL}`);
+      
+      try {
+        response = await fetch(llamaUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: llamaModel,
+            prompt: prompt,
+            stream: false,
+            options: {
+              temperature: 0.7,
+              top_p: 0.95,
+              top_k: 40,
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Local Llama API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        content = data.response || '';
+        
+        if (!content) {
+          throw new Error('No content in Llama response');
+        }
+        
+        console.log('Local Llama response received');
+      } catch (error) {
+        console.error('Local Llama error:', error);
+        if (!GEMINI_API_KEY) {
+          throw new Error(`Local Llama failed and no Gemini API key configured: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        // Fallback to Gemini if available
+        console.log('Falling back to Gemini API...');
+        USE_LOCAL_LLAMA = false;
       }
-      if (response.status === 400) {
-        try {
-          const errorData = JSON.parse(errorText);
+    }
+
+    // Use Gemini API if not using local Llama or if local Llama failed
+    if (!USE_LOCAL_LLAMA && GEMINI_API_KEY) {
+      const model = 'gemini-1.5-flash';
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+
+      response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: prompt
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 8192,
+            responseMimeType: 'application/json',
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Gemini API error:', response.status, errorText);
+        
+        if (response.status === 429) {
           return new Response(
-            JSON.stringify({ error: errorData.error?.message || 'Invalid request to Gemini API' }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        } catch {
-          return new Response(
-            JSON.stringify({ error: 'Invalid request to Gemini API' }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            JSON.stringify({ error: 'Rate limit exceeded. Please try again in a moment.' }),
+            { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
+        if (response.status === 400) {
+          try {
+            const errorData = JSON.parse(errorText);
+            return new Response(
+              JSON.stringify({ error: errorData.error?.message || 'Invalid request to Gemini API' }),
+              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          } catch {
+            return new Response(
+              JSON.stringify({ error: 'Invalid request to Gemini API' }),
+              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        }
+        
+        throw new Error(`Gemini API error: ${response.status}`);
       }
-      
-      throw new Error(`Gemini API error: ${response.status}`);
+
+      const data = await response.json();
+      content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+      if (!content) {
+        console.error('No content in Gemini response:', JSON.stringify(data));
+        throw new Error('No content in AI response');
+      }
+
+      console.log('Gemini response received, parsing scenes...');
+    } else if (!USE_LOCAL_LLAMA && !GEMINI_API_KEY) {
+      throw new Error('Neither LOCAL_LLAMA_URL nor GEMINI_API_KEY is configured. Please set USE_LOCAL_LLAMA=true and LOCAL_LLAMA_URL, or configure GEMINI_API_KEY');
     }
 
-    const data = await response.json();
-    
-    // Extract text content from Gemini response
-    const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!content) {
-      console.error('No content in Gemini response:', JSON.stringify(data));
-      throw new Error('No content in AI response');
-    }
-
-    console.log('Gemini response received, parsing scenes...');
-
-    // Parse JSON response (Gemini should return JSON directly with responseMimeType)
+    // Parse JSON response
     let parsed;
     try {
       parsed = JSON.parse(content);
@@ -143,7 +196,13 @@ ${story}`;
       if (jsonMatch) {
         parsed = JSON.parse(jsonMatch[1].trim());
       } else {
-        throw new Error('Failed to parse JSON from response');
+        // Try to find JSON object in the text
+        const jsonObjectMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonObjectMatch) {
+          parsed = JSON.parse(jsonObjectMatch[0]);
+        } else {
+          throw new Error('Failed to parse JSON from response');
+        }
       }
     }
     

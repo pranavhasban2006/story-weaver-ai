@@ -34,17 +34,23 @@
 
 ### Backend (100% Complete)
 - ✅ **Supabase Edge Functions**
-  - `generate-scenes` - Uses Gemini API for scene breakdown
-  - `generate-image` - Uses OpenAI DALL-E 3 for image generation
-  - `text-to-speech` - Uses OpenAI/ElevenLabs/Google TTS
+  - `generate-scenes` - Uses Gemini API OR Local Llama (Ollama) for scene breakdown
+  - `generate-image` - Uses OpenAI DALL-E 3 OR Local Stable Diffusion for image generation
+  - `text-to-speech` - Uses OpenAI/ElevenLabs/Google TTS OR Local TTS (Piper)
   - `compose-video` - Uses Shotstack for video rendering
 
 - ✅ **API Integration**
-  - Gemini API integration (direct)
-  - OpenAI API integration
-  - ElevenLabs API support
+  - Gemini API integration (direct) OR Local Llama (Ollama)
+  - OpenAI API integration OR Local Stable Diffusion
+  - ElevenLabs API support OR Local TTS (Piper)
   - Google Cloud TTS support
   - Shotstack API integration
+  
+- ✅ **Local LLM Support (NEW!)**
+  - Local Llama integration via Ollama
+  - Local Stable Diffusion integration
+  - Local TTS integration via Piper
+  - Automatic fallback to cloud APIs if local services unavailable
 
 ### Database (100% Complete)
 - ✅ **Schema**
@@ -75,14 +81,17 @@
 - ✅ Database usage guide
 - ✅ Gemini API setup guide
 - ✅ API comparison guide
+- ✅ Local Llama setup guide (NEW!)
+- ✅ Local setup configuration guide (NEW!)
+- ✅ Quick fix guides
 
 ---
 
 ## ⚠️ Needs Setup/Configuration
 
 ### 1. Environment Variables (Required)
-You need to set these in Supabase:
 
+**Option A: Use Cloud APIs (Original Setup)**
 ```bash
 # Required
 supabase secrets set GEMINI_API_KEY=your_gemini_api_key
@@ -90,12 +99,31 @@ supabase secrets set OPENAI_API_KEY=your_openai_api_key
 supabase secrets set SHOTSTACK_API_KEY=your_shotstack_api_key
 
 # Optional (for TTS - choose one)
-supabase secrets set OPENAI_API_KEY=your_openai_api_key  # Can reuse OpenAI key
-# OR
 supabase secrets set ELEVENLABS_API_KEY=your_elevenlabs_api_key
 # OR
 supabase secrets set GOOGLE_TTS_API_KEY=your_google_tts_api_key
 ```
+
+**Option B: Use Local LLM Services (NEW!)**
+```bash
+# For local Llama (Ollama)
+supabase secrets set USE_LOCAL_LLAMA=true
+supabase secrets set LOCAL_LLAMA_URL=http://your-server:11434
+supabase secrets set LLAMA_MODEL=llama3.2
+
+# For local Stable Diffusion
+supabase secrets set USE_LOCAL_SD=true
+supabase secrets set LOCAL_SD_URL=http://your-server:7860
+
+# For local TTS (Piper)
+supabase secrets set USE_LOCAL_TTS=true
+supabase secrets set LOCAL_TTS_URL=http://your-server:5000
+
+# Still need Shotstack for video rendering
+supabase secrets set SHOTSTACK_API_KEY=your_shotstack_api_key
+```
+
+**Note:** You can mix and match (e.g., local Llama + cloud APIs for images/TTS)
 
 ### 2. Database Setup (Required)
 Run migrations:
