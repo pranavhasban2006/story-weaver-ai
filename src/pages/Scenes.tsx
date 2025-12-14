@@ -1,96 +1,125 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { ScenePreviewHeader } from "@/components/scenes/ScenePreviewHeader";
 import { SceneCard } from "@/components/scenes/SceneCard";
 import { LoadingOverlay } from "@/components/scenes/LoadingOverlay";
-import { Scene } from "@/lib/types";
+import { Scene, AspectRatio, VoiceType } from "@/lib/types";
+import { generateImage, generateSpeech } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
-
-// Demo image URLs for prototype
-const demoImages = [
-  "https://images.unsplash.com/photo-1518837695005-2083093ee35b?w=800&h=450&fit=crop",
-  "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&h=450&fit=crop",
-  "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=800&h=450&fit=crop",
-  "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&h=450&fit=crop",
-  "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=800&h=450&fit=crop",
-  "https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=800&h=450&fit=crop",
-  "https://images.unsplash.com/photo-1501854140801-50d01698950b?w=800&h=450&fit=crop",
-];
 
 const Scenes = () => {
   const navigate = useNavigate();
   const [scenes, setScenes] = useState<Scene[]>([]);
+  const [config, setConfig] = useState<{ aspectRatio: AspectRatio; voiceType: VoiceType } | null>(null);
   const [isComposing, setIsComposing] = useState(false);
   const [composingProgress, setComposingProgress] = useState(0);
+  const [generatingImages, setGeneratingImages] = useState<Set<number>>(new Set());
+  const [generatingAudio, setGeneratingAudio] = useState<Set<number>>(new Set());
+
+  const generateImageForScene = useCallback(async (scene: Scene, aspectRatio: AspectRatio) => {
+    setGeneratingImages(prev => new Set(prev).add(scene.sceneNumber));
+    setScenes(prev => prev.map(s => 
+      s.sceneNumber === scene.sceneNumber ? { ...s, status: 'generating' as const } : s
+    ));
+
+    try {
+      const response = await generateImage(scene.imagePrompt, aspectRatio, scene.sceneNumber);
+      
+      setScenes(prev => prev.map(s => 
+        s.sceneNumber === scene.sceneNumber
+          ? { ...s, imageUrl: response.imageUrl, status: 'ready' as const }
+          : s
+      ));
+      
+      toast({
+        title: "Image Generated",
+        description: `Scene ${scene.sceneNumber} image is ready.`,
+      });
+    } catch (error) {
+      console.error(`Failed to generate image for scene ${scene.sceneNumber}:`, error);
+      setScenes(prev => prev.map(s => 
+        s.sceneNumber === scene.sceneNumber ? { ...s, status: 'error' as const } : s
+      ));
+      toast({
+        title: "Image Generation Failed",
+        description: error instanceof Error ? error.message : "Please try regenerating.",
+        variant: "destructive",
+      });
+    } finally {
+      setGeneratingImages(prev => {
+        const next = new Set(prev);
+        next.delete(scene.sceneNumber);
+        return next;
+      });
+    }
+  }, []);
+
+  const generateAudioForScene = useCallback(async (scene: Scene, voiceType: VoiceType) => {
+    setGeneratingAudio(prev => new Set(prev).add(scene.sceneNumber));
+
+    try {
+      const response = await generateSpeech(scene.narrationText, voiceType, scene.sceneNumber);
+      
+      setScenes(prev => prev.map(s => 
+        s.sceneNumber === scene.sceneNumber
+          ? { ...s, audioUrl: response.audioUrl, duration: response.duration }
+          : s
+      ));
+    } catch (error) {
+      console.error(`Failed to generate audio for scene ${scene.sceneNumber}:`, error);
+    } finally {
+      setGeneratingAudio(prev => {
+        const next = new Set(prev);
+        next.delete(scene.sceneNumber);
+        return next;
+      });
+    }
+  }, []);
 
   useEffect(() => {
     const storedScenes = sessionStorage.getItem('visionforge_scenes');
+    const storedConfig = sessionStorage.getItem('visionforge_config');
+    
     if (!storedScenes) {
       navigate('/');
       return;
     }
     
     const parsedScenes: Scene[] = JSON.parse(storedScenes);
-    setScenes(parsedScenes);
+    const parsedConfig = storedConfig ? JSON.parse(storedConfig) : { aspectRatio: '16:9', voiceType: 'female' };
     
-    // Simulate image generation for each scene
+    setScenes(parsedScenes);
+    setConfig(parsedConfig);
+    
+    // Generate images and audio for each scene with staggered delays
     parsedScenes.forEach((scene, index) => {
       setTimeout(() => {
-        setScenes(prev => prev.map(s => 
-          s.sceneNumber === scene.sceneNumber
-            ? { 
-                ...s, 
-                status: 'generating' as const,
-              }
-            : s
-        ));
-        
-        // Complete after delay
-        setTimeout(() => {
-          setScenes(prev => prev.map(s => 
-            s.sceneNumber === scene.sceneNumber
-              ? { 
-                  ...s, 
-                  status: 'ready' as const,
-                  imageUrl: demoImages[index % demoImages.length],
-                  audioUrl: 'demo-audio',
-                  duration: 3 + Math.random() * 4,
-                }
-              : s
-          ));
-        }, 1500 + Math.random() * 1000);
-      }, index * 800);
+        generateImageForScene(scene, parsedConfig.aspectRatio);
+        generateAudioForScene(scene, parsedConfig.voiceType);
+      }, index * 2000); // 2 second delay between each scene to avoid rate limits
     });
-  }, [navigate]);
+  }, [navigate, generateImageForScene, generateAudioForScene]);
 
   const readyCount = scenes.filter(s => s.status === 'ready').length;
 
-  const handleRegenerateImage = (sceneNumber: number) => {
-    setScenes(prev => prev.map(s => 
-      s.sceneNumber === sceneNumber
-        ? { ...s, status: 'generating' as const }
-        : s
-    ));
-    
-    setTimeout(() => {
-      const randomImage = demoImages[Math.floor(Math.random() * demoImages.length)];
-      setScenes(prev => prev.map(s => 
-        s.sceneNumber === sceneNumber
-          ? { ...s, status: 'ready' as const, imageUrl: randomImage }
-          : s
-      ));
-      toast({
-        title: "Image Regenerated",
-        description: `Scene ${sceneNumber} has a new image.`,
-      });
-    }, 2000);
+  const handleRegenerateImage = async (sceneNumber: number) => {
+    const scene = scenes.find(s => s.sceneNumber === sceneNumber);
+    if (scene && config) {
+      await generateImageForScene(scene, config.aspectRatio);
+    }
   };
 
   const handlePreviewAudio = (sceneNumber: number) => {
-    toast({
-      title: "Audio Preview",
-      description: `Playing audio for Scene ${sceneNumber}...`,
-    });
+    const scene = scenes.find(s => s.sceneNumber === sceneNumber);
+    if (scene?.audioUrl && scene.audioUrl !== 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=') {
+      const audio = new Audio(scene.audioUrl);
+      audio.play();
+    } else {
+      toast({
+        title: "Audio Preview",
+        description: `Playing narration for Scene ${sceneNumber}... (demo mode)`,
+      });
+    }
   };
 
   const handleCompose = async () => {
@@ -156,7 +185,8 @@ const Scenes = () => {
               onRegenerateImage={() => handleRegenerateImage(scene.sceneNumber)}
               onPreviewAudio={() => handlePreviewAudio(scene.sceneNumber)}
               onEditTitle={() => {}}
-              isGeneratingImage={scene.status === 'generating'}
+              isGeneratingImage={generatingImages.has(scene.sceneNumber)}
+              isGeneratingAudio={generatingAudio.has(scene.sceneNumber)}
             />
           </div>
         ))}
