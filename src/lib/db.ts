@@ -50,6 +50,13 @@ export interface VideoRow {
   completed_at?: string;
 }
 
+// Type-safe wrapper for supabase operations (tables may not be in auto-generated types yet)
+const db = {
+  stories: () => supabase.from('stories' as any),
+  scenes: () => supabase.from('scenes' as any),
+  videos: () => supabase.from('videos' as any),
+};
+
 // Story operations
 export async function createStory(
   storyText: string,
@@ -57,8 +64,7 @@ export async function createStory(
   voiceType: VoiceType,
   aspectRatio: AspectRatio
 ): Promise<Story> {
-  const { data, error } = await supabase
-    .from('stories')
+  const { data, error } = await db.stories()
     .insert({
       story_text: storyText,
       style,
@@ -69,12 +75,11 @@ export async function createStory(
     .single();
 
   if (error) throw error;
-  return data;
+  return data as unknown as Story;
 }
 
 export async function getStory(storyId: string): Promise<Story | null> {
-  const { data, error } = await supabase
-    .from('stories')
+  const { data, error } = await db.stories()
     .select('*')
     .eq('id', storyId)
     .is('deleted_at', null)
@@ -84,37 +89,35 @@ export async function getStory(storyId: string): Promise<Story | null> {
     if (error.code === 'PGRST116') return null; // Not found
     throw error;
   }
-  return data;
+  return data as unknown as Story;
 }
 
 export async function getUserStories(): Promise<Story[]> {
-  const { data, error } = await supabase
-    .from('stories')
+  const { data, error } = await db.stories()
     .select('*')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data || [];
+  return (data || []) as unknown as Story[];
 }
 
 export async function updateStory(
   storyId: string,
   updates: Partial<Pick<Story, 'story_text' | 'style' | 'voice_type' | 'aspect_ratio'>>
 ): Promise<Story> {
-  const { data, error } = await supabase
-    .from('stories')
+  const { data, error } = await db.stories()
     .update(updates)
     .eq('id', storyId)
     .select()
     .single();
 
   if (error) throw error;
-  return data;
+  return data as unknown as Story;
 }
 
 export async function deleteStory(storyId: string): Promise<boolean> {
-  const { error } = await supabase.rpc('soft_delete_story', {
+  const { error } = await supabase.rpc('soft_delete_story' as any, {
     story_uuid: storyId,
   });
 
@@ -137,39 +140,36 @@ export async function createScenes(
     status: 'pending' as const,
   }));
 
-  const { data, error } = await supabase
-    .from('scenes')
+  const { data, error } = await db.scenes()
     .insert(sceneRows)
     .select();
 
   if (error) throw error;
-  return data || [];
+  return (data || []) as unknown as SceneRow[];
 }
 
 export async function getStoryScenes(storyId: string): Promise<SceneRow[]> {
-  const { data, error } = await supabase
-    .from('scenes')
+  const { data, error } = await db.scenes()
     .select('*')
     .eq('story_id', storyId)
     .order('scene_number', { ascending: true });
 
   if (error) throw error;
-  return data || [];
+  return (data || []) as unknown as SceneRow[];
 }
 
 export async function updateScene(
   sceneId: string,
   updates: Partial<Pick<SceneRow, 'image_url' | 'audio_url' | 'duration' | 'status'>>
 ): Promise<SceneRow> {
-  const { data, error } = await supabase
-    .from('scenes')
+  const { data, error } = await db.scenes()
     .update(updates)
     .eq('id', sceneId)
     .select()
     .single();
 
   if (error) throw error;
-  return data;
+  return data as unknown as SceneRow;
 }
 
 export async function updateSceneByNumber(
@@ -177,8 +177,7 @@ export async function updateSceneByNumber(
   sceneNumber: number,
   updates: Partial<Pick<SceneRow, 'image_url' | 'audio_url' | 'duration' | 'status'>>
 ): Promise<SceneRow> {
-  const { data, error } = await supabase
-    .from('scenes')
+  const { data, error } = await db.scenes()
     .update(updates)
     .eq('story_id', storyId)
     .eq('scene_number', sceneNumber)
@@ -186,7 +185,7 @@ export async function updateSceneByNumber(
     .single();
 
   if (error) throw error;
-  return data;
+  return data as unknown as SceneRow;
 }
 
 // Video operations
@@ -197,8 +196,7 @@ export async function createVideo(
   includeMusic: boolean,
   renderId?: string
 ): Promise<VideoRow> {
-  const { data, error } = await supabase
-    .from('videos')
+  const { data, error } = await db.videos()
     .insert({
       story_id: storyId,
       video_url: videoUrl,
@@ -212,7 +210,7 @@ export async function createVideo(
     .single();
 
   if (error) throw error;
-  return data;
+  return data as unknown as VideoRow;
 }
 
 export async function createVideoRender(
@@ -220,8 +218,7 @@ export async function createVideoRender(
   renderId: string,
   includeMusic: boolean
 ): Promise<VideoRow> {
-  const { data, error } = await supabase
-    .from('videos')
+  const { data, error } = await db.videos()
     .insert({
       story_id: storyId,
       video_url: '', // Will be updated when render completes
@@ -234,38 +231,36 @@ export async function createVideoRender(
     .single();
 
   if (error) throw error;
-  return data;
+  return data as unknown as VideoRow;
 }
 
 export async function updateVideo(
   videoId: string,
   updates: Partial<Pick<VideoRow, 'video_url' | 'metadata' | 'status' | 'error_message' | 'completed_at'>>
 ): Promise<VideoRow> {
-  const { data, error } = await supabase
-    .from('videos')
+  const { data, error } = await db.videos()
     .update(updates)
     .eq('id', videoId)
     .select()
     .single();
 
   if (error) throw error;
-  return data;
+  return data as unknown as VideoRow;
 }
 
 export async function getStoryVideos(storyId: string): Promise<VideoRow[]> {
-  const { data, error } = await supabase
-    .from('videos')
+  const { data, error } = await db.videos()
     .select('*')
     .eq('story_id', storyId)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data || [];
+  return (data || []) as unknown as VideoRow[];
 }
 
 // Helper functions
 export async function getStoryWithScenes(storyId: string) {
-  const { data, error } = await supabase.rpc('get_story_with_scenes', {
+  const { data, error } = await supabase.rpc('get_story_with_scenes' as any, {
     story_uuid: storyId,
   });
 
@@ -274,7 +269,7 @@ export async function getStoryWithScenes(storyId: string) {
 }
 
 export async function getStoryStatistics(storyId: string) {
-  const { data, error } = await supabase.rpc('get_story_statistics', {
+  const { data, error } = await supabase.rpc('get_story_statistics' as any, {
     story_uuid: storyId,
   });
 
@@ -283,7 +278,7 @@ export async function getStoryStatistics(storyId: string) {
 }
 
 export async function getUserStoriesSummary() {
-  const { data, error } = await supabase.rpc('get_user_stories_summary');
+  const { data, error } = await supabase.rpc('get_user_stories_summary' as any);
 
   if (error) throw error;
   return data;
@@ -352,4 +347,3 @@ export async function uploadVideo(file: File, storyId: string, videoId: string):
 
   return data.publicUrl;
 }
-
