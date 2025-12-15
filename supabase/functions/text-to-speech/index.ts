@@ -216,6 +216,7 @@ serve(async (req) => {
     }
 
     // Last resort: Use Lovable AI Gateway or return placeholder
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!audioUrl && LOVABLE_API_KEY) {
       try {
         console.log('Attempting TTS with Lovable AI Gateway (may not support TTS directly)...');
