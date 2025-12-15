@@ -68,7 +68,7 @@ Analyze this story and break it into cinematic scenes:
 
 ${story}`;
 
-    let content: string;
+    let content: string = '';
     let response: Response;
 
     // Try local Llama (Ollama) first if configured
