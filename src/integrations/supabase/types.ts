@@ -14,13 +14,157 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      scenes: {
+        Row: {
+          audio_url: string | null
+          created_at: string
+          description: string
+          duration: number | null
+          id: string
+          image_prompt: string
+          image_url: string | null
+          narration_text: string
+          scene_number: number
+          status: string
+          story_id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          audio_url?: string | null
+          created_at?: string
+          description: string
+          duration?: number | null
+          id?: string
+          image_prompt: string
+          image_url?: string | null
+          narration_text: string
+          scene_number: number
+          status?: string
+          story_id: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          audio_url?: string | null
+          created_at?: string
+          description?: string
+          duration?: number | null
+          id?: string
+          image_prompt?: string
+          image_url?: string | null
+          narration_text?: string
+          scene_number?: number
+          status?: string
+          story_id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scenes_story_id_fkey"
+            columns: ["story_id"]
+            isOneToOne: false
+            referencedRelation: "stories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stories: {
+        Row: {
+          aspect_ratio: string
+          created_at: string
+          deleted_at: string | null
+          id: string
+          story_text: string
+          style: string
+          updated_at: string
+          user_id: string | null
+          voice_type: string
+          word_count: number | null
+        }
+        Insert: {
+          aspect_ratio?: string
+          created_at?: string
+          deleted_at?: string | null
+          id?: string
+          story_text: string
+          style?: string
+          updated_at?: string
+          user_id?: string | null
+          voice_type?: string
+          word_count?: number | null
+        }
+        Update: {
+          aspect_ratio?: string
+          created_at?: string
+          deleted_at?: string | null
+          id?: string
+          story_text?: string
+          style?: string
+          updated_at?: string
+          user_id?: string | null
+          voice_type?: string
+          word_count?: number | null
+        }
+        Relationships: []
+      }
+      videos: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          id: string
+          include_music: boolean
+          metadata: Json
+          render_id: string | null
+          status: string
+          story_id: string
+          video_url: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          include_music?: boolean
+          metadata?: Json
+          render_id?: string | null
+          status?: string
+          story_id: string
+          video_url?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          include_music?: boolean
+          metadata?: Json
+          render_id?: string | null
+          status?: string
+          story_id?: string
+          video_url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "videos_story_id_fkey"
+            columns: ["story_id"]
+            isOneToOne: false
+            referencedRelation: "stories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_story_statistics: { Args: { story_uuid: string }; Returns: Json }
+      get_story_with_scenes: { Args: { story_uuid: string }; Returns: Json }
+      get_user_stories_summary: { Args: never; Returns: Json }
+      soft_delete_story: { Args: { story_uuid: string }; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
