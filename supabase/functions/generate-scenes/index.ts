@@ -1,39 +1,58 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
 };
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
+  if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
     const { story, style } = await req.json();
-    
-    // Support both local Llama (Ollama) and Gemini API
-    const LOCAL_LLAMA_URL = Deno.env.get('LOCAL_LLAMA_URL') || 'http://localhost:11434';
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-    let USE_LOCAL_LLAMA = Deno.env.get('USE_LOCAL_LLAMA') === 'true' || !GEMINI_API_KEY;
+
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    const USE_LOCAL_LLAMA =
+      Deno.env.get("USE_LOCAL_LLAMA") === "true"; // simplified flag
+
+    // Hard guard: if NOT using local Llama, Gemini key must exist
+    if (!USE_LOCAL_LLAMA && !GEMINI_API_KEY) {
+      return new Response(
+        JSON.stringify({ error: "GEMINI_API_KEY not configured" }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
 
     if (!story || story.trim().length < 50) {
       return new Response(
-        JSON.stringify({ error: 'Story must be at least 50 characters' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: "Story must be at least 50 characters" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
     const wordCount = story.trim().split(/\s+/).length;
     if (wordCount > 2000) {
       return new Response(
-        JSON.stringify({ error: 'Story must be under 2000 words' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: "Story must be under 2000 words" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
-    console.log(`Generating scenes for story with ${wordCount} words, style: ${style}`);
+    console.log(
+      `Generating scenes for story with ${wordCount} words, style: ${style}`,
+    );
 
     const prompt = `You are a professional cinematic scene breakdown AI for video generation. Your task is to analyze stories and break them into distinct visual scenes optimized for AI video creation.
 
@@ -68,25 +87,24 @@ Analyze this story and break it into cinematic scenes:
 
 ${story}`;
 
-    let content: string = '';
-    let response: Response;
+    let content = "";
 
-    // Try local Llama (Ollama) first if configured
+    // Optional: local Llama (Ollama) first, if enabled
     if (USE_LOCAL_LLAMA) {
-      const llamaModel = Deno.env.get('LLAMA_MODEL') || 'llama3.2';
+      const LOCAL_LLAMA_URL =
+        Deno.env.get("LOCAL_LLAMA_URL") || "http://localhost:11434";
+      const llamaModel = Deno.env.get("LLAMA_MODEL") || "llama3.2";
       const llamaUrl = `${LOCAL_LLAMA_URL}/api/generate`;
-      
+
       console.log(`Using local Llama (${llamaModel}) at ${LOCAL_LLAMA_URL}`);
-      
+
       try {
-        response = await fetch(llamaUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+        const llamaRes = await fetch(llamaUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model: llamaModel,
-            prompt: prompt,
+            prompt,
             stream: false,
             options: {
               temperature: 0.7,
@@ -96,139 +114,164 @@ ${story}`;
           }),
         });
 
-        if (!response.ok) {
-          throw new Error(`Local Llama API error: ${response.status}`);
+        if (!llamaRes.ok) {
+          throw new Error(`Local Llama API error: ${llamaRes.status}`);
         }
 
-        const data = await response.json();
-        content = data.response || '';
-        
+        const data = await llamaRes.json();
+        content = data.response || "";
         if (!content) {
-          throw new Error('No content in Llama response');
+          throw new Error("No content in Llama response");
         }
-        
-        console.log('Local Llama response received');
+
+        console.log("Local Llama response received");
       } catch (error) {
-        console.error('Local Llama error:', error);
+        console.error("Local Llama error:", error);
         if (!GEMINI_API_KEY) {
-          throw new Error(`Local Llama failed and no Gemini API key configured: ${error instanceof Error ? error.message : String(error)}`);
+          throw new Error(
+            `Local Llama failed and no Gemini API key configured: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
         }
-        // Fallback to Gemini if available
-        console.log('Falling back to Gemini API...');
-        USE_LOCAL_LLAMA = false;
+        console.log("Falling back to Gemini API...");
       }
     }
 
-    // Use Gemini API if not using local Llama or if local Llama failed
-    if (!USE_LOCAL_LLAMA && GEMINI_API_KEY) {
-      const model = 'gemini-1.5-flash';
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+    // Use Gemini if not using Llama, or if Llama didn't produce content
+    if (!content && GEMINI_API_KEY) {
+      // Updated model id + v1 endpoint to avoid 404
+      const model = "models/gemini-1.5-flash"; // or "models/gemini-1.5-flash-latest"
+      const apiUrl =
+        `https://generativelanguage.googleapis.com/v1/${model}:generateContent?key=${GEMINI_API_KEY}`;
 
-      response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      const geminiRes = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: prompt
-            }]
-          }],
+          contents: [
+            {
+              parts: [{ text: prompt }],
+            },
+          ],
           generationConfig: {
             temperature: 0.7,
             topK: 40,
             topP: 0.95,
             maxOutputTokens: 8192,
-            responseMimeType: 'application/json',
+            responseMimeType: "application/json",
           },
         }),
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Gemini API error:', response.status, errorText);
-        
-        if (response.status === 429) {
+      if (!geminiRes.ok) {
+        const errorText = await geminiRes.text();
+        console.error("Gemini API error:", geminiRes.status, errorText);
+
+        if (geminiRes.status === 429) {
           return new Response(
-            JSON.stringify({ error: 'Rate limit exceeded. Please try again in a moment.' }),
-            { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            JSON.stringify({
+              error: "Rate limit exceeded. Please try again in a moment.",
+            }),
+            {
+              status: 429,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
           );
         }
-        if (response.status === 400) {
+
+        if (geminiRes.status === 400) {
           try {
             const errorData = JSON.parse(errorText);
             return new Response(
-              JSON.stringify({ error: errorData.error?.message || 'Invalid request to Gemini API' }),
-              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              JSON.stringify({
+                error:
+                  errorData.error?.message ||
+                  "Invalid request to Gemini API",
+              }),
+              {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
             );
           } catch {
             return new Response(
-              JSON.stringify({ error: 'Invalid request to Gemini API' }),
-              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              JSON.stringify({ error: "Invalid request to Gemini API" }),
+              {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
             );
           }
         }
-        
-        throw new Error(`Gemini API error: ${response.status}`);
+
+        throw new Error(`Gemini API error: ${geminiRes.status}`);
       }
 
-      const data = await response.json();
-      content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const data = await geminiRes.json();
+      content = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
       if (!content) {
-        console.error('No content in Gemini response:', JSON.stringify(data));
-        throw new Error('No content in AI response');
+        console.error(
+          "No content in Gemini response:",
+          JSON.stringify(data),
+        );
+        throw new Error("No content in AI response");
       }
 
-      console.log('Gemini response received, parsing scenes...');
-    } else if (!USE_LOCAL_LLAMA && !GEMINI_API_KEY) {
-      throw new Error('Neither LOCAL_LLAMA_URL nor GEMINI_API_KEY is configured. Please set USE_LOCAL_LLAMA=true and LOCAL_LLAMA_URL, or configure GEMINI_API_KEY');
+      console.log("Gemini response received, parsing scenes...");
+    } else if (!content && !USE_LOCAL_LLAMA && !GEMINI_API_KEY) {
+      throw new Error(
+        "Neither LOCAL_LLAMA_URL nor GEMINI_API_KEY is configured. Please set USE_LOCAL_LLAMA=true and LOCAL_LLAMA_URL, or configure GEMINI_API_KEY",
+      );
+    }
+
+    if (!content) {
+      throw new Error(
+        "No AI response content from either Local Llama or Gemini",
+      );
     }
 
     // Parse JSON response
-    let parsed;
+    let parsed: any;
     try {
       parsed = JSON.parse(content);
-    } catch (parseError) {
-      // Fallback: try to extract JSON from markdown code blocks
-      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    } catch {
+      // look for `````` or ``````
+      const jsonMatch = content.match(/``````/);
       if (jsonMatch) {
         parsed = JSON.parse(jsonMatch[1].trim());
       } else {
-        // Try to find JSON object in the text
         const jsonObjectMatch = content.match(/\{[\s\S]*\}/);
         if (jsonObjectMatch) {
           parsed = JSON.parse(jsonObjectMatch[0]);
         } else {
-          throw new Error('Failed to parse JSON from response');
+          throw new Error("Failed to parse JSON from response");
         }
       }
     }
-    
+
     if (!parsed.scenes || !Array.isArray(parsed.scenes)) {
-      throw new Error('Invalid response format: missing scenes array');
+      throw new Error("Invalid response format: missing scenes array");
     }
 
-    // Add status to each scene
     const scenes = parsed.scenes.map((scene: any) => ({
       ...scene,
-      status: 'pending'
+      status: "pending",
     }));
 
     console.log(`Successfully generated ${scenes.length} scenes`);
 
-    return new Response(
-      JSON.stringify({ scenes }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-
+    return new Response(JSON.stringify({ scenes }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (error: unknown) {
-    console.error('Error in generate-scenes:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to generate scenes';
-    return new Response(
-      JSON.stringify({ error: errorMessage }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    console.error("Error in generate-scenes:", error);
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to generate scenes";
+    return new Response(JSON.stringify({ error: errorMessage }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
